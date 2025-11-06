@@ -60,13 +60,13 @@ jobs:
           echo "检查 Cloudflare Pages 项目是否存在..."
           PROJECT_CHECK=$(curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects" \
             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            -H "Content-Type: application/json" | jq -r '.result[] | select(.name=="cpaste") | .name')
+            -H "Content-Type: application/json" | jq -r '.result[] | select(.name=="opencp") | .name')
 
           if [ -n "$PROJECT_CHECK" ]; then
-            echo "✅ 找到现有Pages项目: cpaste"
+            echo "✅ 找到现有Pages项目: opencp"
             echo "project_exists=true" >> $GITHUB_OUTPUT
           else
-            echo "⚠️ 未找到Pages项目: cpaste"
+            echo "⚠️ 未找到Pages项目: opencp"
             echo "project_exists=false" >> $GITHUB_OUTPUT
           fi
 
@@ -76,10 +76,10 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          echo "创建 Cloudflare Pages 项目: cpaste..."
+          echo "创建 Cloudflare Pages 项目: opencp..."
           cat << EOF > pages-config.json
           {
-            "name": "cpaste",
+            "name": "opencp",
             "production_branch": "production"
           }
           EOF
@@ -100,7 +100,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          npx wrangler pages deploy ./dist --project-name=cpaste --branch production 2>&1 | sed -E 's/https:\/\/[a-zA-Z0-9.-]*\.(workers|pages)\.dev/https:\/\/[REDACTED].\1.dev/g'
+          npx wrangler pages deploy ./dist --project-name=opencp --branch production 2>&1 | sed -E 's/https:\/\/[a-zA-Z0-9.-]*\.(workers|pages)\.dev/https:\/\/[REDACTED].\1.dev/g'
 
       - name: Display Success Information
         if: steps.check-deploy-button.outputs.is_deploy_button == 'true' && success()
@@ -111,7 +111,7 @@ jobs:
           echo ""
           echo "注意: 您需要在 Cloudflare Pages 控制面板中手动设置环境变量:"
           echo "- 登录 https://dash.cloudflare.com/"
-          echo "- 进入 Pages > cpaste > Settings > Environment variables"
+          echo "- 进入 Pages > opencp > Settings > Environment variables"
           echo "- 添加 VITE_BACKEND_URL = 您的后端Worker URL"
           echo ""
           echo "后续步骤："
