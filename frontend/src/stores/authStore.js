@@ -7,6 +7,7 @@ import { defineStore } from "pinia";
 import { ref, computed } from "vue";
 import { api } from "@/api";
 import { Permission, PermissionChecker } from "@/constants/permissions.js";
+import { registerAuthBridge } from "./authBridge.js";
 
 // 配置常量
 const REVALIDATION_INTERVAL = 5 * 60 * 1000; // 5分钟
@@ -35,8 +36,10 @@ export const useAuthStore = defineStore("auth", () => {
   // 使用位标志权限系统
   const apiKeyPermissions = ref(0); // 位标志权限值
   const apiKeyPermissionDetails = ref({
-    text: false,
-    file: false,
+    text_share: false,
+    text_manage: false,
+    file_share: false,
+    file_manage: false,
     mount_view: false,
     mount_upload: false,
     mount_copy: false,
@@ -58,15 +61,26 @@ export const useAuthStore = defineStore("auth", () => {
   // 是否为管理员（从 authType 推导，消除冗余状态）
   const isAdmin = computed(() => authType.value === "admin");
 
-  // 是否有文本权限
-  const hasTextPermission = computed(() => {
-    return isAdmin.value || PermissionChecker.hasPermission(apiKeyPermissions.value, Permission.TEXT);
+  // 文本/文件分享权限（创建 vs 管理）
+  const hasTextSharePermission = computed(() => {
+    return isAdmin.value || PermissionChecker.hasPermission(apiKeyPermissions.value, Permission.TEXT_SHARE);
   });
 
-  // 是否有文件权限
-  const hasFilePermission = computed(() => {
+  const hasTextManagePermission = computed(() => {
+    return isAdmin.value || PermissionChecker.hasPermission(apiKeyPermissions.value, Permission.TEXT_MANAGE);
+  });
+
+  const hasFileSharePermission = computed(() => {
     return isAdmin.value || PermissionChecker.hasPermission(apiKeyPermissions.value, Permission.FILE_SHARE);
   });
+
+  const hasFileManagePermission = computed(() => {
+    return isAdmin.value || PermissionChecker.hasPermission(apiKeyPermissions.value, Permission.FILE_MANAGE);
+  });
+
+  // 兼容旧命名：hasTextPermission / hasFilePermission 代表“具备对应分享能力（通常用于创建）”
+  const hasTextPermission = hasTextSharePermission;
+  const hasFilePermission = hasFileSharePermission;
 
   // 是否有挂载权限（任一挂载权限）
   const hasMountPermission = computed(() => {
@@ -118,6 +132,36 @@ export const useAuthStore = defineStore("auth", () => {
     return Date.now() - lastValidated.value > REVALIDATION_INTERVAL;
   });
 
+  const convertPermissionsToBitFlag = (permissions) => {
+    if (typeof permissions === "number") {
+      return permissions;
+    }
+
+    if (permissions && typeof permissions === "object") {
+      let bitFlag = 0;
+      // 兼容新旧字段命名（text/text_share, file/file_share 等）
+      const textShare = permissions.text_share ?? permissions.text ?? false;
+      const textManage = permissions.text_manage ?? false;
+      const fileShare = permissions.file_share ?? permissions.file ?? false;
+      const fileManage = permissions.file_manage ?? false;
+
+      if (textShare) bitFlag |= Permission.TEXT_SHARE;
+      if (textManage) bitFlag |= Permission.TEXT_MANAGE;
+      if (fileShare) bitFlag |= Permission.FILE_SHARE;
+      if (fileManage) bitFlag |= Permission.FILE_MANAGE;
+      if (permissions.mount_view) bitFlag |= Permission.MOUNT_VIEW;
+      if (permissions.mount_upload) bitFlag |= Permission.MOUNT_UPLOAD;
+      if (permissions.mount_copy) bitFlag |= Permission.MOUNT_COPY;
+      if (permissions.mount_rename) bitFlag |= Permission.MOUNT_RENAME;
+      if (permissions.mount_delete) bitFlag |= Permission.MOUNT_DELETE;
+      if (permissions.webdav_read) bitFlag |= Permission.WEBDAV_READ;
+      if (permissions.webdav_manage) bitFlag |= Permission.WEBDAV_MANAGE;
+      return bitFlag;
+    }
+
+    return 0;
+  };
+
   // ===== 私有方法 =====
 
   /**
@@ -157,30 +201,7 @@ export const useAuthStore = defineStore("auth", () => {
         try {
           const storedPermissions = localStorage.getItem(STORAGE_KEYS.API_KEY_PERMISSIONS);
           if (storedPermissions) {
-            const permissions = JSON.parse(storedPermissions);
-            // 支持新旧权限格式
-            if (typeof permissions === "number") {
-              // 新的位标志权限格式
-              apiKeyPermissions.value = permissions;
-            } else {
-              // 布尔权限格式，转换为位标志
-              let bitFlag = 0;
-              if (permissions.text) bitFlag |= Permission.TEXT;
-              if (permissions.file) bitFlag |= Permission.FILE_SHARE;
-
-              // 处理详细的挂载权限
-              if (permissions.mount_view) bitFlag |= Permission.MOUNT_VIEW;
-              if (permissions.mount_upload) bitFlag |= Permission.MOUNT_UPLOAD;
-              if (permissions.mount_copy) bitFlag |= Permission.MOUNT_COPY;
-              if (permissions.mount_rename) bitFlag |= Permission.MOUNT_RENAME;
-              if (permissions.mount_delete) bitFlag |= Permission.MOUNT_DELETE;
-
-              // 处理WebDAV权限
-              if (permissions.webdav_read) bitFlag |= Permission.WEBDAV_READ;
-              if (permissions.webdav_manage) bitFlag |= Permission.WEBDAV_MANAGE;
-
-              apiKeyPermissions.value = bitFlag;
-            }
+            apiKeyPermissions.value = convertPermissionsToBitFlag(JSON.parse(storedPermissions));
           }
         } catch (permError) {
           console.warn("加载API密钥权限失败:", permError);
@@ -296,31 +317,9 @@ export const useAuthStore = defineStore("auth", () => {
         const response = await api.test.verifyApiKey();
         if (response.success && response.data) {
           // 更新权限信息
-          if (response.data.permissions) {
-            // 支持新旧权限格式
-            if (typeof response.data.permissions === "object" && response.data.permissions.text !== undefined) {
-              // 布尔权限格式，转换为位标志
-              let bitFlag = 0;
-              if (response.data.permissions.text) bitFlag |= Permission.TEXT;
-              if (response.data.permissions.file) bitFlag |= Permission.FILE_SHARE;
-
-              // 处理详细的挂载权限
-              if (response.data.permissions.mount_view) bitFlag |= Permission.MOUNT_VIEW;
-              if (response.data.permissions.mount_upload) bitFlag |= Permission.MOUNT_UPLOAD;
-              if (response.data.permissions.mount_copy) bitFlag |= Permission.MOUNT_COPY;
-              if (response.data.permissions.mount_rename) bitFlag |= Permission.MOUNT_RENAME;
-              if (response.data.permissions.mount_delete) bitFlag |= Permission.MOUNT_DELETE;
-
-              // 处理WebDAV权限
-              if (response.data.permissions.webdav_read) bitFlag |= Permission.WEBDAV_READ;
-              if (response.data.permissions.webdav_manage) bitFlag |= Permission.WEBDAV_MANAGE;
-
-              apiKeyPermissions.value = bitFlag;
-            } else {
-              // 新的位标志权限格式或直接的数字
-              apiKeyPermissions.value = response.data.permissions;
-            }
-          }
+        if (response.data.permissions) {
+          apiKeyPermissions.value = convertPermissionsToBitFlag(response.data.permissions);
+        }
 
           // 更新API密钥信息（包括基础路径）
           if (response.data.key_info) {
@@ -428,29 +427,7 @@ export const useAuthStore = defineStore("auth", () => {
 
       // 设置权限
       if (response.data.permissions) {
-        // 支持新旧权限格式
-        if (typeof response.data.permissions === "object" && response.data.permissions.text !== undefined) {
-          // 布尔权限格式，转换为位标志
-          let bitFlag = 0;
-          if (response.data.permissions.text) bitFlag |= Permission.TEXT;
-          if (response.data.permissions.file) bitFlag |= Permission.FILE_SHARE;
-
-          // 处理详细的挂载权限
-          if (response.data.permissions.mount_view) bitFlag |= Permission.MOUNT_VIEW;
-          if (response.data.permissions.mount_upload) bitFlag |= Permission.MOUNT_UPLOAD;
-          if (response.data.permissions.mount_copy) bitFlag |= Permission.MOUNT_COPY;
-          if (response.data.permissions.mount_rename) bitFlag |= Permission.MOUNT_RENAME;
-          if (response.data.permissions.mount_delete) bitFlag |= Permission.MOUNT_DELETE;
-
-          // 处理WebDAV权限
-          if (response.data.permissions.webdav_read) bitFlag |= Permission.WEBDAV_READ;
-          if (response.data.permissions.webdav_manage) bitFlag |= Permission.WEBDAV_MANAGE;
-
-          apiKeyPermissions.value = bitFlag;
-        } else {
-          // 新的位标志权限格式或直接的数字
-          apiKeyPermissions.value = response.data.permissions;
-        }
+        apiKeyPermissions.value = convertPermissionsToBitFlag(response.data.permissions);
       }
 
       // 设置密钥信息
@@ -605,6 +582,16 @@ export const useAuthStore = defineStore("auth", () => {
     return apiKeyInfo.value.id === createdBy;
   };
 
+  registerAuthBridge({
+    getSnapshot: () => ({
+      authType: authType.value,
+      adminToken: adminToken.value,
+      apiKey: apiKey.value,
+      isAuthenticated: isAuthenticated.value,
+    }),
+    logout,
+  });
+
   // 返回store的状态和方法
   return {
     // 状态
@@ -621,7 +608,11 @@ export const useAuthStore = defineStore("auth", () => {
 
     // 计算属性
     hasTextPermission,
+    hasTextSharePermission,
+    hasTextManagePermission,
     hasFilePermission,
+    hasFileSharePermission,
+    hasFileManagePermission,
     hasMountPermission,
     hasMountViewPermission,
     hasMountUploadPermission,
